@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#1d1a16">
+<title>Verificare telefon</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Tinos:ital,wght@0,400;0,700;1,400&display=swap">
+<link rel="stylesheet" href="assets/app.css">
+<link rel="stylesheet" href="assets/phone.css">
+<style>
+  .chk { list-style: none; padding: 0; margin: 0 0 18px; }
+  .chk li { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; background: var(--paper); }
+  .chk li b { display: inline-block; width: 1.6em; }
+  .verdict { font-size: 20px; font-weight: 700; margin: 14px 0; }
+</style>
+</head>
+<body>
+<!-- Device check for game night. Contains nothing about the case: it never decrypts the archive. -->
+<div id="app"><header class="top"><div class="brand">Arhiva Moldovan</div><h1>Verificarea telefonului</h1></header>
+<main>
+  <section class="intro">
+    <p>Pagina asta nu arată nimic din dosar. Verifică doar dacă telefonul poate deschide arhiva în seara jocului.</p>
+  </section>
+  <ul class="chk" id="chk"></ul>
+  <div class="verdict" id="verdict">Verific...</div>
+  <section class="intro" id="demo-intro" hidden>
+    <p><b>Ultimul test, cu degetul:</b> mai jos e un telefon de probă, inventat. Atingeți ecranul, apoi introduceți codul <b>1234</b>. Deschideți aplicațiile, intrați într-o conversație, reveniți cu bara de jos. Dacă merge totul fluid, sunteți gata.</p>
+  </section>
+  <div id="phone-host"></div>
+  <p class="sub" style="margin-top:18px">La final, puteți închide pagina. Nu a salvat nimic pe telefon.</p>
+</main></div>
+<script src="data/vault.js"></script>
+<script src="assets/phone.js"></script>
+<script>
+(async function () {
+  "use strict";
+  const list = document.getElementById("chk");
+  const add = (ok, text) => { const li = document.createElement("li"); li.innerHTML = `<b>${ok ? "✅" : "❌"}</b>${text}`; list.appendChild(li); return ok; };
+  let all = true;
+
+  // 1. Encryption (the archive uses PBKDF2 + AES-GCM, like this test).
+  try {
+    const t0 = performance.now();
+    const enc = new TextEncoder();
+    const base = await crypto.subtle.importKey("raw", enc.encode("proba"), "PBKDF2", false, ["deriveKey"]);
+    const key = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: enc.encode("sare-de-proba-16"), iterations: (window.VAULT && window.VAULT.iter) || 120000, hash: "SHA-256" },
+      base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode("merge"));
+    const pt = new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct));
+    const ms = Math.round(performance.now() - t0);
+    all = add(pt === "merge", `Criptarea funcționează (${ms} ms pe o parolă${ms > 4000 ? ", cam lent, dar merge" : ""}).`) && all;
+  } catch (e) { all = add(false, "Browserul nu poate face criptarea. Încercați Chrome sau Safari, actualizate."); }
+
+  // 2. Saving progress.
+  try { localStorage.setItem("verificare", "1"); const ok = localStorage.getItem("verificare") === "1"; localStorage.removeItem("verificare");
+    all = add(ok, ok ? "Progresul se poate salva pe telefon." : "Progresul nu se poate salva (navigare privată?).") && all;
+  } catch (e) { all = add(false, "Progresul nu se poate salva. Ieșiți din navigarea privată / incognito."); }
+
+  // 3. The archive file arrived complete (only its shape is checked, nothing is opened).
+  const v = window.VAULT;
+  all = add(!!(v && v.gates && v.payloads && Object.keys(v.gates).length >= 8), v ? "Arhiva s-a descărcat complet." : "Arhiva nu s-a descărcat. Verificați internetul și reîncărcați pagina.") && all;
+
+  // 4. Screen.
+  add(true, `Ecran: ${window.innerWidth} px lățime${window.innerWidth < 340 ? " (mic, dar merge)" : ""}.`);
+
+  document.getElementById("verdict").textContent = all ? "Telefonul e pregătit." : "Ceva nu merge, vedeți mai sus.";
+  if (!window.Phone) return add(false, "Interfața telefonului nu s-a încărcat.");
+
+  // 5. Demo phone with invented content.
+  document.getElementById("demo-intro").hidden = false;
+  const chat = { type: "chat", title: "Ana", messages: [{ day: "azi" }, { from: "them", t: "10:02", text: "Mergem la piață?" }, { from: "me", t: "10:05", text: "Da, iau eu coșul.", read: true }] };
+  const demo = { apps: [
+    { id: "msg", name: "Mesaje", icon: "messages", dock: true, page: { type: "list", title: "Mesaje", groups: [{ items: [{ title: "Ana", sub: "Mergem la piață?", meta: "10:02", avatar: "A", avbg: "#8e44ad", page: chat }] }] } },
+    { id: "note", name: "Notițe", icon: "notes", page: { type: "list", title: "Notițe", groups: [{ items: [{ title: "Listă", sub: "pâine, lapte", page: { type: "html", title: "Listă", html: "<div class=\"card\"><p>pâine<br>lapte<br>mere</p></div>" } }] }] } },
+    { id: "set", name: "Setări", icon: "settings", page: { type: "html", title: "Setări", html: "<div class=\"card\"><table><tr><td>Telefon</td><td>de probă</td></tr></table></div>" } },
+  ] };
+  window.Phone.mount(document.getElementById("phone-host"), {
+    lock: { caption: "Telefon de probă. Nu are legătură cu dosarul.", time: "12:00", date: "joi, 1 ianuarie", battery: 80,
+      notifs: [{ app: "Mesaje", icon: "messages", t: "10:02", title: "Ana", body: "Mergem la piață?" }] },
+    exitHref: "./",
+    tryPin: async (pin) => (pin === "1234" ? demo : null),
+  });
+})();
+</script>
+</body>
+</html>
